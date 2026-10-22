@@ -100,25 +100,25 @@ object YunXHost {
         val ctx: Context = app
         Thread.setDefaultUncaughtExceptionHandler(CrashHandler(app))
         runCatching {
-            val hits = ArchiveProbe.fast(ctx).toMutableList()
-            if (entryMismatch(ctx)) hits.add(4)
+            val hits = ArchiveProbe.fast(app).toMutableList()
+            if (entryMismatch(app)) hits.add(4)
             if (hits.isNotEmpty()) {
                 CrashHandler.terminate(hits.joinToString(","))
             }
         }
-        scheduleDeepScan(ctx)
-        com.yunx.app.data.network.XunleiDeviceFingerprint.init(ctx)
+        scheduleDeepScan(app)
+        com.yunx.app.data.network.XunleiDeviceFingerprint.init(app)
         // 123 云盘的设备标识（loginuuid）：账号密码登录与所有业务请求都要带，必须跨启动保持稳定，
         // 否则服务端会把每次启动都当成新设备（登录更容易被要求过验证）
-        com.yunx.app.data.network.Pan123DeviceId.install(ctx)
+        com.yunx.app.data.network.Pan123DeviceId.install(app)
         // 本机密钥失效自愈：必须在**任何**凭证读写之前装配。改锁屏密码/指纹会让 Android Keystore
         // 里的密钥被系统永久作废（KeyPermanentlyInvalidatedException / Key not found / Invalid
         // key blob 三种形态），此时要记下「登录态已失效」的一次性提示，而不是把 Keystore 异常
         // 抛到主线程把 App 崩掉（1.2.8 的三份崩溃报告）。
-        com.yunx.app.data.security.CredentialStore.installRecovery(ctx)
+        com.yunx.app.data.security.CredentialStore.installRecovery(app)
         // 隐藏 WebView 解析通道：需要跟踪「当前前台 Activity」以便把隐藏 WebView 挂上窗口
         // （不挂窗口的话 requestAnimationFrame / visibilityState 会不对，页面初始化脚本可能卡住）
-        com.yunx.app.data.network.video.HeadlessWebView.install(ctx)
+        com.yunx.app.data.network.video.HeadlessWebView.install(app)
         // 启动时恢复用户配置的 HTTP 代理（任何异常都不得影响应用启动）
         runCatching {
             val prefs = app.getSharedPreferences("yunx_settings", Context.MODE_PRIVATE)
@@ -130,17 +130,17 @@ object YunXHost {
                 }
             }
         }
-        purgeDownloadLeftovers(ctx)
+        purgeDownloadLeftovers(app)
         // 诊断日志：读开关（默认关）并定好落盘目录；开着才起写线程，关着这里几乎零开销
-        com.yunx.app.util.DiagnosticLog.install(ctx)
+        com.yunx.app.util.DiagnosticLog.install(app)
         // 下载调试：读开关（默认关）。必须在任何下载开始之前装配，否则开关打开后先建的任务收不到事件
-        com.yunx.app.data.download.DownloadDebugLog.install(ctx)
+        com.yunx.app.data.download.DownloadDebugLog.install(app)
         // 链接唤起（深链接）：把用户设置刷到清单里那些 activity-alias 的启停状态。
         // 设置里改开关是即时同步的，这里兜安装后首次启动与「改过开关又重装/清数据」的对齐；
         // 任何异常都只记日志，绝不影响启动。
-        runCatching { com.yunx.app.util.LinkOpener.syncAll(ctx) }
+        runCatching { com.yunx.app.util.LinkOpener.syncAll(app) }
         // 选了 Gopeed 引擎且已导入内核：启动就把它加载起来（失败只记日志，绝不影响应用启动）
-        autoStartGopeedIfSelected(ctx)
+        autoStartGopeedIfSelected(app)
     }
 
     /** 供宿主转发内存压力回调（宿主 onTrimMemory 里调一下即可）。 */
