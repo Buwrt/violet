@@ -27,7 +27,6 @@ lifecycleRuntimeKtx = "2.9.2"
 material3 = "1.4.0"
 # ↑ material 由 1.10.0 升到 1.14.0：YunX 依赖 Material3 Expressive 与
 #   com.google.android.material.color.utilities（该包只在 1.14+ 的主库里）
-material = "1.14.0"
 
 
 [libraries]
