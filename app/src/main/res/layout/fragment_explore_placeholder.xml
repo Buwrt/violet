@@ -696,13 +696,6 @@
                             android:textColor="@color/explore_slate_800"
                             android:textSize="14sp" />
                     </LinearLayout>
-                </LinearLayout>
-            </LinearLayout>
-        </com.google.android.material.card.MaterialCardView>
-
-    </LinearLayout>
-</androidx.core.widget.NestedScrollView>
-
 
                 <LinearLayout
                     android:id="@+id/btnYunX"
@@ -740,3 +733,9 @@
                         android:textColor="@color/explore_slate_800"
                         android:textSize="14sp" />
                 </LinearLayout>
+                </LinearLayout>
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
+
+    </LinearLayout>
+</androidx.core.widget.NestedScrollView>
