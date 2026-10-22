@@ -63,6 +63,14 @@
             android:name=".ui.payload.PayloadActivity"
             android:exported="false" />
         <activity
+            android:name=".ui.rom.RomZoneActivity"
+            android:exported="false"
+            android:label="ROM 专区" />
+        <activity
+            android:name=".ui.rom.RomDownloadsActivity"
+            android:exported="false"
+            android:label="下载管理" />
+        <activity
             android:name=".ui.plugin.VioletPluginActivity"
             android:exported="false" />
         <activity

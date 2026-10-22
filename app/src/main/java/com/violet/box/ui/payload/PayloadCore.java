@@ -28,12 +28,12 @@ import okhttp3.Request;
 import okhttp3.Response;
 import okhttp3.ResponseBody;
 
-final class PayloadCore {
+public final class PayloadCore {
 
     private PayloadCore() {
     }
 
-    static final class PayloadSession implements Closeable {
+    public static final class PayloadSession implements Closeable {
         final String fileName;
         final Manifest manifest;
         final long dataOffset;
@@ -82,11 +82,11 @@ final class PayloadCore {
         }
     }
 
-    static final class PartitionInfoRow {
-        final String name;
-        final long size;
-        final long rawSize;
-        final String sha256;
+    public static final class PartitionInfoRow {
+        public final String name;
+        public final long size;
+        public final long rawSize;
+        public final String sha256;
 
         PartitionInfoRow(String name, long size, long rawSize, String sha256) {
             this.name = name;
@@ -96,7 +96,7 @@ final class PayloadCore {
         }
     }
 
-    static List<PartitionInfoRow> getPartitionInfoList(PayloadSession session) {
+    public static List<PartitionInfoRow> getPartitionInfoList(PayloadSession session) {
         List<PartitionInfoRow> rows = new ArrayList<>();
         for (Partition it : session.manifest.partitions) {
             if (it.operations.isEmpty()) {
@@ -144,7 +144,7 @@ final class PayloadCore {
         }
     }
 
-    static PayloadSession parseFromUrl(String url, String userAgent) throws IOException {
+    public static PayloadSession parseFromUrl(String url, String userAgent) throws IOException {
         HttpReader http = new HttpReader();
         http.init(url, userAgent);
         long payloadOffset = getPayloadOffset(url, http);
@@ -160,7 +160,7 @@ final class PayloadCore {
         }
     }
 
-    static void extractPartition(PayloadSession session, String partitionName, String outputDir,
+    public static void extractPartition(PayloadSession session, String partitionName, String outputDir,
                                  ProgressCallback callback) throws IOException {
         Partition target = null;
         for (Partition p : session.manifest.partitions) {
@@ -342,7 +342,7 @@ final class PayloadCore {
         }
     }
 
-    interface ProgressCallback {
+    public interface ProgressCallback {
         void onProgress(long bytes, String outPath);
     }
 

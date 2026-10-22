@@ -219,6 +219,12 @@ public class MainActivity extends AppCompatActivity {
             btnPayload.setOnClickListener(v ->
                     startActivity(new Intent(this, PayloadActivity.class)));
         }
+        View btnRomZone = findViewById(R.id.btnRomZone);
+        if (btnRomZone != null) {
+            btnRomZone.setOnClickListener(v ->
+                    startActivity(new Intent(this,
+                            com.violet.box.ui.rom.RomZoneActivity.class)));
+        }
         View btnVioletPlugin = findViewById(R.id.btnVioletPlugin);
         if (btnVioletPlugin != null) {
             btnVioletPlugin.setOnClickListener(v ->

@@ -2,4 +2,13 @@
     <string name="app_name">紫罗兰Box</string>
     <!-- 关于页 / 副标题里显示的品牌全称，改这里即可全局生效 -->
     <string name="app_name_full">紫罗兰Box</string>
+
+    <!-- ROM 专区：可云端提取的分区 -->
+    <string-array name="rom_partitions">
+        <item>boot</item>
+        <item>init_boot</item>
+        <item>dtbo</item>
+        <item>recovery</item>
+        <item>vendor_boot</item>
+    </string-array>
 </resources>
