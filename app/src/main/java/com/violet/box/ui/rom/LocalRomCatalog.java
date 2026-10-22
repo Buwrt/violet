@@ -24,6 +24,9 @@ import java.util.Map;
  */
 public final class LocalRomCatalog {
 
+    /** 外链条目在「区域 / 版本类型」上的通配值：任何筛选条件都匹配。 */
+    public static final String WILDCARD = "见页面";
+
     /** 一条版本记录。 */
     public static final class Version {
         public final String version;
@@ -44,12 +47,15 @@ public final class LocalRomCatalog {
         public final String source;
         /** 含 payload.bin → 可不下整包直接抠 boot / init_boot。 */
         public final boolean payload;
+        /** true = 这是第三方站的机型下载页，要用浏览器打开，不是文件直链。 */
+        public final boolean external;
         /** 同固件的其它分块（一加归档的 firmware / logical 分卷 / hash）。 */
         public final Map<String, String> extra;
 
         Version(String version, String regionCode, String region, String versionType,
                 String romType, String android, String url, long size, String date,
-                String note, String source, boolean payload, Map<String, String> extra) {
+                String note, String source, boolean payload, boolean external,
+                Map<String, String> extra) {
             this.version = version;
             this.regionCode = regionCode;
             this.region = region;
@@ -62,6 +68,7 @@ public final class LocalRomCatalog {
             this.note = note;
             this.source = source;
             this.payload = payload;
+            this.external = external;
             this.extra = extra == null
                     ? Collections.<String, String>emptyMap()
                     : Collections.unmodifiableMap(new LinkedHashMap<>(extra));
@@ -78,6 +85,7 @@ public final class LocalRomCatalog {
          * 或者本身就是分区镜像归档（解压即是成品镜像）。
          */
         public boolean canExtractBoot() {
+            if (external) return false;   // 外链页面不能直接抠镜像
             return payload || (romType != null && romType.contains("分区镜像"));
         }
 
@@ -89,6 +97,7 @@ public final class LocalRomCatalog {
             if (versionType != null && !versionType.isEmpty()) sb.append(" · ").append(versionType);
             if (region != null && !region.isEmpty()) sb.append(" · ").append(region);
             if (!hasLink()) sb.append(" · 暂无直链");
+            else if (external) sb.append(" · 浏览器打开下载页");
             return sb.toString();
         }
     }
@@ -277,6 +286,7 @@ public final class LocalRomCatalog {
                 o.optString("note", ""),
                 o.optString("source", ""),
                 o.optBoolean("payload", false),
+                o.optBoolean("external", false),
                 extra);
     }
 

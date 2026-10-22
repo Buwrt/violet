@@ -4,6 +4,7 @@ import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
 import android.content.Intent;
+import android.net.Uri;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
@@ -346,15 +347,24 @@ public class RomZoneActivity extends AppCompatActivity {
         String romType = current(spRomType);
         for (LocalRomCatalog.Version v : d.versions) {
             if (!v.hasLink()) continue;
-            if (useRegion && !region.isEmpty() && !ALL.equals(region)
-                    && !region.equals(v.region)) continue;
-            if (useVerType && !verType.isEmpty() && !ALL.equals(verType)
-                    && !verType.equals(v.versionType)) continue;
-            if (useRomType && !romType.isEmpty() && !ALL.equals(romType)
-                    && !romType.equals(v.romType)) continue;
+            if (useRegion && !levelMatch(region, v.region)) continue;
+            if (useVerType && !levelMatch(verType, v.versionType)) continue;
+            if (useRomType && !levelMatch(romType, v.romType)) continue;
             return true;
         }
         return false;
+    }
+
+    /**
+     * 单级匹配，支持通配：
+     * 外链（第三方站下载页）拿不到区域/版本信息，字段填的是 WILDCARD，
+     * 这时任何筛选条件都算匹配，否则用户选了「国行版」就看不到这些机型了。
+     */
+    private static boolean levelMatch(String selected, String value) {
+        if (selected == null || selected.isEmpty() || ALL.equals(selected)) return true;
+        if (value == null || value.isEmpty()) return true;
+        if (LocalRomCatalog.WILDCARD.equals(value)) return true;
+        return selected.equals(value);
     }
 
     /** 从满足条件的版本里抽出某一字段的可选值。 */
@@ -457,7 +467,28 @@ public class RomZoneActivity extends AppCompatActivity {
             return;
         }
         currentVer = v;
+        if (v.external) {
+            openExternal(v);
+            return;
+        }
         startDownload(currentDeviceName(), v.label(), v.url, null);
+    }
+
+    /**
+     * 外链：这是第三方站的机型下载页，不是文件直链。
+     * 那类站点的下载按钮由 JS 动态生成，服务端取不到文件地址，
+     * 所以只能把页面交给浏览器，用户在页面里选版本下载。
+     */
+    private void openExternal(LocalRomCatalog.Version v) {
+        log(describe(v));
+        try {
+            Intent it = new Intent(Intent.ACTION_VIEW, Uri.parse(v.url));
+            it.addCategory(Intent.CATEGORY_BROWSABLE);
+            startActivity(it);
+            Toast.makeText(this, "已用浏览器打开下载页，在页面里选版本", Toast.LENGTH_LONG).show();
+        } catch (Throwable t) {
+            Toast.makeText(this, "打不开链接：" + v.url, Toast.LENGTH_LONG).show();
+        }
     }
 
     /**
@@ -471,11 +502,17 @@ public class RomZoneActivity extends AppCompatActivity {
             return;
         }
         int n = 0;
+        int ext = 0;
         for (int i : pos) {
             LocalRomCatalog.Version v = versionResults.get(i);
             if (!v.hasLink()) continue;
+            if (v.external) { ext++; continue; }
             startDownload(versionDeviceNames.get(i), v.label(), v.url, null);
             n++;
+        }
+        if (ext > 0) {
+            log("跳过了 " + ext + " 条外链（第三方站下载页不是文件直链）。\n"
+                    + "外链请单独选中后点「下载整包」，会用浏览器打开页面。");
         }
         log("已把 " + n + " 个版本加入下载队列（串行执行）。\n"
                 + "点「下载管理」可暂停 / 继续 / 取消，关掉本页面也不会中断。");
@@ -547,6 +584,12 @@ public class RomZoneActivity extends AppCompatActivity {
         }
         currentVer = v;
         final String part = initBoot ? "init_boot" : "boot";
+        if (v.external) {
+            log("这条是第三方站的机型下载页，不是文件直链，没法直接抠镜像。\n"
+                    + "请点「下载整包」用浏览器打开页面，在页面里找全量包下载后本地解包。");
+            Toast.makeText(this, "外链页面不支持直接提取镜像", Toast.LENGTH_LONG).show();
+            return;
+        }
         if (!v.canExtractBoot()) {
             log("该包无法直接提取 " + part + ".img：既不含 payload.bin，也不是分区镜像归档。\n"
                     + "只能下载整包后本地解包。");
