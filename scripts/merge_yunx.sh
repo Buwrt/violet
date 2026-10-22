@@ -72,11 +72,65 @@ if [ -d "$YUNX/app/src/main/assets" ]; then
   echo "assets: $(find "$DST/assets" -type f | wc -l) 个文件"
 fi
 
-# ---------- 4. jniLibs：YunX 自带的 so（若有）----------
+# ---------- 4. libs：YunX 自带的 Gopeed 绑定 jar ----------
+if [ -d "$YUNX/app/libs" ]; then
+  mkdir -p app/libs
+  cp -r "$YUNX/app/libs/." app/libs/
+  echo "libs: $(ls app/libs)"
+  # 让 Gradle 认下这个 jar（宿主原本没有 libs 目录依赖声明）
+  python3 - <<'PYEOF'
+import re
+p='app/build.gradle.kts'
+s=open(p,encoding='utf-8').read()
+if 'gopeed-classes.jar' not in s:
+    s=s.replace('    // ===== 云析 YunX（AGPL-3.0）=====',
+                '    // 云析的 Gopeed 引擎绑定（YunX 自带的预编译 jar）\n'
+                '    implementation(files("libs/gopeed-classes.jar"))\n\n'
+                '    // ===== 云析 YunX（AGPL-3.0）=====')
+    open(p,'w',encoding='utf-8').write(s)
+    print("已加入 gopeed-classes.jar 依赖")
+PYEOF
+fi
+
+# ---------- 5. jniLibs：YunX 自带的 so（若有）----------
 if [ -d "$YUNX/app/src/main/jniLibs" ]; then
   mkdir -p "$DST/jniLibs"
   cp -r "$YUNX/app/src/main/jniLibs/." "$DST/jniLibs/"
   echo "jniLibs 已拷贝"
 fi
+
+# ---------- 6. R 类改写 ----------
+# 融合后整个 APK 只有一个 R，生成在宿主的 namespace（com.violet.box）下。
+# YunX 源码里写的是 com.yunx.app.R，必须统一改成 com.violet.box.R；
+# 隐式引用 R（没 import，靠同包名解析）的文件也要补上显式 import。
+python3 - <<'PYEOF'
+import os, re
+root = 'app/src/main/kotlin/com/yunx'
+HOST_R = 'com.violet.box.R'
+changed = 0
+imported = 0
+for dp, _, fs in os.walk(root):
+    for f in fs:
+        if not f.endswith('.kt'):
+            continue
+        fp = os.path.join(dp, f)
+        src = open(fp, encoding='utf-8').read()
+        if not re.search(r'\bR\.(string|drawable|layout|mipmap|xml|color|style|dimen|id|array|plurals|raw|anim|font)\b', src):
+            continue
+        out = src
+        # 把 com.yunx.app.R 改成宿主 R
+        if 'com.yunx.app.R' in out:
+            out = out.replace('com.yunx.app.R', HOST_R)
+            changed += 1
+        # 没有显式 import R 的，补一个（放在 package 行之后）
+        if not re.search(r'^import\s+' + HOST_R.replace('.', r'\.') + r'\s*$', out, re.M):
+            m = re.search(r'^package\s+[^\n]+\n', out, re.M)
+            if m:
+                out = out[:m.end()] + '\nimport ' + HOST_R + '\n' + out[m.end():]
+                imported += 1
+        if out != src:
+            open(fp, 'w', encoding='utf-8').write(out)
+print(f"R 引用改写: {changed} 个文件换包名, {imported} 个文件补 import")
+PYEOF
 
 echo "===== 合并完成 ====="

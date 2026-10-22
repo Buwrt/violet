@@ -67,6 +67,8 @@ dependencies {
     implementation(libs.compose.ui)
     implementation(libs.compose.ui.tooling.preview)
     implementation(libs.compose.material3)
+    // YunX 用到 Material3 Expressive（1.5.0-alpha18 才有，BOM 里的稳定版不含）
+    implementation("androidx.compose.material3:material3:1.5.0-alpha18")
     debugImplementation(libs.compose.ui.tooling)
     implementation(libs.backdrop)
     implementation(libs.capsule)
