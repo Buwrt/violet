@@ -372,6 +372,11 @@ public class RomZoneActivity extends AppCompatActivity {
         return out;
     }
 
+    /** 从一条版本记录里取出某一级筛选字段。 */
+    private interface FieldPicker {
+        String pick(LocalRomCatalog.Version v);
+    }
+
     private List<LocalRomCatalog.Device> filterBySearch(List<LocalRomCatalog.Device> base) {
         String q = etDeviceSearch == null ? "" : String.valueOf(etDeviceSearch.getText()).trim();
         if (q.isEmpty()) return base;
