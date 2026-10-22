@@ -1,0 +1,219 @@
+/*
+ * YunX (云析) - A network drive share-link parser and high-speed downloader for Android.
+ * Copyright (C) 2026 CYQawa
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Affero General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
+package com.yunx.app
+
+import android.app.Application
+import android.content.Context
+import android.content.pm.PackageManager
+import com.yunx.app.crash.CrashHandler
+import com.yunx.app.util.ArchiveProbe
+import com.yunx.app.util.TextCipher
+
+internal fun earlyProbe(): Boolean {
+    val p1 = TextCipher.pCloudInject
+    val p2 = TextCipher.pSadfxg
+    val p3 = TextCipher.pPx
+    val p4 = TextCipher.pHelper
+    val suffixes = arrayOf(TextCipher.pSpoof, TextCipher.pKillPm, TextCipher.pKillPath, TextCipher.pFasfg)
+    for (pkg in arrayOf(p1, p2, p3, p4)) {
+        if (pkg.isEmpty()) continue
+        for (sfx in suffixes) {
+            if (sfx.isEmpty()) continue
+            runCatching { Class.forName(pkg + "." + sfx) }.getOrNull()?.let { return true }
+            runCatching { Class.forName(pkg + "." + sfx + ".App") }.getOrNull()?.let { return true }
+        }
+    }
+    return false
+}
+
+internal fun entryMismatch(ctx: Context): Boolean {
+    val app = TextCipher.pYunxApp
+    val main = TextCipher.pMainAct
+    val main2 = TextCipher.pMainAct2
+    return try {
+        val pm = ctx.packageManager
+        val info = pm.getPackageInfo(ctx.packageName, PackageManager.GET_ACTIVITIES)
+        val appName = info.applicationInfo?.className.orEmpty()
+        // ★ 融合适配（紫罗兰Box）：本文件已并入 com.violet.box 宿主 App，
+        //   Application 类名必然是宿主的（VioletApplication），不是 ".YunXApp"。
+        //   这是**源码级整合**（同一个 APK、同一份源码树），不是拿成品 APK 二次打包重签名，
+        //   所以这里不该判为「入口被换掉」。其余自检（ArchiveProbe 的资产 / SO / dex 指纹
+        //   扫描、earlyProbe 的注入探测）全部原样保留。
+        //   宿主 Application 白名单：只允许这两种，避免把「真被换了 Application」也放过。
+        val hostAppOk = appName.isEmpty() || appName.endsWith(app) ||
+            appName == "com.violet.box.VioletApplication"
+        if (!hostAppOk) return true
+        val launch = pm.getLaunchIntentForPackage(ctx.packageName)
+        val comp = launch?.resolveActivity(pm)?.className.orEmpty()
+        if (comp.isNotEmpty() && !comp.endsWith(main) && !comp.endsWith(main2)) return true
+        false
+    } catch (t: Throwable) {
+        false
+    }
+}
+
+class YunXApp : Application() {
+
+    override fun attachBaseContext(base: Context) {
+        super.attachBaseContext(base)
+        runCatching {
+            if (earlyProbe()) {
+                CrashHandler.terminate("0")
+            }
+        }
+    }
+
+    override fun onCreate() {
+        super.onCreate()
+        YunXHost.install(this)
+    }
+}
+
+/**
+ * 云析的运行时装配，供**宿主 App** 调用。
+ *
+ * 原本这些初始化写在 YunXApp.onCreate 里，但一个 APK 只能有一个 Application ——
+ * 融合后宿主是 com.violet.box.VioletApplication，所以把装配逻辑抽成这里，
+ * 由宿主的 onCreate 调用一次。内容与原 YunXApp.onCreate 完全一致，只是把
+ * 隐式 receiver 换成显式 app 参数。
+ */
+object YunXHost {
+
+    @JvmStatic
+    fun install(app: Application) {
+        val ctx: Context = app
+        Thread.setDefaultUncaughtExceptionHandler(CrashHandler(app))
+        runCatching {
+            val hits = ArchiveProbe.fast(ctx).toMutableList()
+            if (entryMismatch(ctx)) hits.add(4)
+            if (hits.isNotEmpty()) {
+                CrashHandler.terminate(hits.joinToString(","))
+            }
+        }
+        scheduleDeepScan(ctx)
+        com.yunx.app.data.network.XunleiDeviceFingerprint.init(ctx)
+        // 123 云盘的设备标识（loginuuid）：账号密码登录与所有业务请求都要带，必须跨启动保持稳定，
+        // 否则服务端会把每次启动都当成新设备（登录更容易被要求过验证）
+        com.yunx.app.data.network.Pan123DeviceId.install(ctx)
+        // 本机密钥失效自愈：必须在**任何**凭证读写之前装配。改锁屏密码/指纹会让 Android Keystore
+        // 里的密钥被系统永久作废（KeyPermanentlyInvalidatedException / Key not found / Invalid
+        // key blob 三种形态），此时要记下「登录态已失效」的一次性提示，而不是把 Keystore 异常
+        // 抛到主线程把 App 崩掉（1.2.8 的三份崩溃报告）。
+        com.yunx.app.data.security.CredentialStore.installRecovery(ctx)
+        // 隐藏 WebView 解析通道：需要跟踪「当前前台 Activity」以便把隐藏 WebView 挂上窗口
+        // （不挂窗口的话 requestAnimationFrame / visibilityState 会不对，页面初始化脚本可能卡住）
+        com.yunx.app.data.network.video.HeadlessWebView.install(ctx)
+        // 启动时恢复用户配置的 HTTP 代理（任何异常都不得影响应用启动）
+        runCatching {
+            val prefs = app.getSharedPreferences("yunx_settings", Context.MODE_PRIVATE)
+            if (prefs.getBoolean("proxy_enabled", false)) {
+                val host = prefs.getString("proxy_host", "")?.takeIf { it.isNotBlank() }
+                val port = prefs.getInt("proxy_port", 7890)
+                if (host != null && port in 1..65535) {
+                    com.yunx.app.data.network.HttpClients.setProxy(host, port)
+                }
+            }
+        }
+        purgeDownloadLeftovers(ctx)
+        // 诊断日志：读开关（默认关）并定好落盘目录；开着才起写线程，关着这里几乎零开销
+        com.yunx.app.util.DiagnosticLog.install(ctx)
+        // 下载调试：读开关（默认关）。必须在任何下载开始之前装配，否则开关打开后先建的任务收不到事件
+        com.yunx.app.data.download.DownloadDebugLog.install(ctx)
+        // 链接唤起（深链接）：把用户设置刷到清单里那些 activity-alias 的启停状态。
+        // 设置里改开关是即时同步的，这里兜安装后首次启动与「改过开关又重装/清数据」的对齐；
+        // 任何异常都只记日志，绝不影响启动。
+        runCatching { com.yunx.app.util.LinkOpener.syncAll(ctx) }
+        // 选了 Gopeed 引擎且已导入内核：启动就把它加载起来（失败只记日志，绝不影响应用启动）
+        autoStartGopeedIfSelected(ctx)
+    }
+
+    /** 供宿主转发内存压力回调（宿主 onTrimMemory 里调一下即可）。 */
+    @JvmStatic
+    fun onTrimMemory(level: Int) {
+        if (level >= android.content.ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW) {
+            com.yunx.app.data.network.HttpClients.evictIdleConnections()
+            android.util.Log.w("YunX", "onTrimMemory level=$level：已释放空闲连接")
+        }
+    }
+}
+
+/** YunXApp 作为独立 App 时的 Application 入口；融合场景下宿主不实例化它，
+ *  但保留原样以便 YunX 单独构建时仍可用。 */
+class YunXAppTail {
+    /**
+     * 内存压力回调：系统回收前先释放「可再生」的内存 —— 空闲 HTTP 连接及其 socket/Conscrypt 缓冲。
+     * 分片下载的数据全部流式落盘、不在堆上缓存，所以这里只丢弃空闲连接，不会影响进行中的下载。
+     */
+    fun onTrimMemory(level: Int) {
+        YunXHost.onTrimMemory(level)
+    }
+}
+
+/** 清理历史版本保存失败遗留的不可见下载半成品（详见 DownloadSaver.purgeOwnPendingFiles）。
+ *  必须早于任何下载启动，故放在 Application.onCreate 的后台线程里做一次。 */
+private fun purgeDownloadLeftovers(ctx: Context) {
+    Thread {
+        runCatching { com.yunx.app.data.download.DownloadSaver.purgeOwnPendingFiles(ctx) }
+    }.start()
+}
+
+/**
+ * 选了 Gopeed 引擎时，应用启动就把引擎加载起来（只有导入过内核才做，见 Agent.md §3.32）。
+ *
+ * 引擎是进程内单例，首次加载要 System.load 56 MB 的 .so 并初始化 Go runtime，提前加载能让第一个
+ * 下载任务不必等它；**任何失败都只记日志** —— 引擎起不来不能影响应用启动，下载侧会按失败任务处理。
+ *
+ * 另外无论选的是哪个下载器，都在这里把引擎的内存状态与真实文件对齐一次（`syncInstalledState`）：
+ * 选内置下载器时下面会直接 return、整条启动流程都不会碰引擎，不对齐的话引擎页会以为「未导入内核」。
+ */
+private fun autoStartGopeedIfSelected(ctx: Context) {
+    val engine = com.yunx.app.data.gopeed.GopeedEngine
+    val settingsRepo = com.yunx.app.data.prefs.SettingsRepository(ctx)
+    engine.syncInstalledState(ctx)
+    if (settingsRepo.downloadEngine != com.yunx.app.data.prefs.SettingsRepository.ENGINE_GOPEED) return
+    if (!engine.isInstalled(ctx)) {
+        // 内核被删了（或从没导入过）但设置还停在 Gopeed：自愈回内置下载器，避免"设置说在用引擎、
+        // 实际跑的是内置下载器"的错位（与下载引擎页删内核时的处理一致）。
+        settingsRepo.downloadEngine = com.yunx.app.data.prefs.SettingsRepository.ENGINE_BUILTIN
+        return
+    }
+    Thread {
+        runCatching {
+            engine.start(ctx, engine.resolveDownloadDir(ctx))
+        }.onFailure {
+            android.util.Log.e("YunX", "启动时自动加载 Gopeed 引擎失败：${it.message}", it)
+        }
+    }.start()
+}
+
+private fun scheduleDeepScan(ctx: Context) {
+    val prefs = ctx.getSharedPreferences("yunx_settings", Context.MODE_PRIVATE)
+    val key = TextCipher.pBootFlag
+    if (prefs.getBoolean(key, false)) return
+    Thread {
+        runCatching {
+            val hits = ArchiveProbe.deep(ctx.applicationContext)
+            if (hits.isNotEmpty()) {
+                CrashHandler.terminate(hits.joinToString(","))
+            } else {
+                prefs.edit().putBoolean(key, true).apply()
+            }
+        }
+    }.start()
+}

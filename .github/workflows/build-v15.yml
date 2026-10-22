@@ -1,0 +1,126 @@
+name: Build V15 APK
+
+on:
+  push:
+    branches:
+      - v15-merge
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Install Android SDK
+        run: |
+          set -e
+          export ANDROID_HOME=$HOME/android-sdk
+          export ANDROID_SDK_ROOT=$ANDROID_HOME
+          mkdir -p "$ANDROID_HOME/cmdline-tools"
+          cd "$ANDROID_HOME/cmdline-tools"
+          curl -sSL -o cmdline.zip https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
+          unzip -q -o cmdline.zip
+          rm -rf latest && mv cmdline-tools latest
+          echo "ANDROID_HOME=$ANDROID_HOME" >> $GITHUB_ENV
+          echo "ANDROID_SDK_ROOT=$ANDROID_HOME" >> $GITHUB_ENV
+          echo "$ANDROID_HOME/cmdline-tools/latest/bin" >> $GITHUB_PATH
+          export PATH="$ANDROID_HOME/cmdline-tools/latest/bin:$PATH"
+          mkdir -p "$ANDROID_HOME/licenses"
+          printf '\n24333f8a63b6825ea9c5514f83c2829b004d1fee\n' > "$ANDROID_HOME/licenses/android-sdk-license"
+          printf '\n84831b9409646a918e30573bab4c9c91346d8abd\n' > "$ANDROID_HOME/licenses/android-sdk-preview-license"
+          yes | sdkmanager --licenses > /dev/null 2>&1 || true
+          sdkmanager --install "platform-tools" "platforms;android-36" "build-tools;36.0.0"
+
+      # Kotlin 版本写死在 libs.versions.toml，KSP 必须与 Kotlin 前两段严格一致，
+      # 写死容易因为该版本不存在而失败。这里查 Maven 元数据取实际可用的最新版再写回。
+      - name: Resolve KSP / Room versions from Maven
+        run: |
+          set -e
+          KOTLIN=$(grep -m1 '^kotlin = ' gradle/libs.versions.toml | sed 's/kotlin = "//;s/"//')
+          echo "Kotlin: $KOTLIN"
+          MAJOR=$(echo "$KOTLIN" | cut -d. -f1,2)
+          echo "需要 KSP 前缀: $MAJOR"
+          KSP=$(curl -sSL https://repo1.maven.org/maven2/com/google/devtools/ksp/symbol-processing-api/maven-metadata.xml \
+                | grep -o "<version>${MAJOR}[^<]*</version>" | sed 's/<[^>]*>//g' | tail -1)
+          echo "探测到 KSP: ${KSP:-<none>}"
+          if [ -n "$KSP" ]; then
+            sed -i "s|^ksp  = \".*\"|ksp  = \"$KSP\"|" gradle/libs.versions.toml
+          fi
+          ROOM=$(curl -sSL https://repo1.maven.org/maven2/androidx/room/room-runtime/maven-metadata.xml \
+                | grep -o "<version>2\.[0-9]*\.[0-9]*</version>" | sed 's/<[^>]*>//g' | tail -1)
+          echo "探测到 Room: ${ROOM:-<none>}"
+          if [ -n "$ROOM" ]; then
+            sed -i "s|^room = \".*\"|room = \"$ROOM\"|" gradle/libs.versions.toml
+          fi
+          echo "--- 最终版本 ---"
+          grep -E "^(kotlin|ksp|room|markdownRenderer|media3|coil) " gradle/libs.versions.toml
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x ./gradlew
+
+      - name: Build Debug APK
+        run: |
+          set -eo pipefail
+          ./gradlew :app:assembleDebug --stacktrace 2>&1 | tee build-debug.log
+
+      - name: Build Release APK
+        run: |
+          set -eo pipefail
+          ./gradlew :app:assembleRelease --stacktrace 2>&1 | tee build-release.log
+
+      - name: Collect APKs
+        run: |
+          mkdir -p apk-out
+          find app/build/outputs -name "*.apk" -type f -print > apk-list.txt || true
+          cat apk-list.txt
+          while IFS= read -r f; do
+            [ -n "$f" ] && cp "$f" apk-out/ || true
+          done < apk-list.txt
+          ls -lh apk-out
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: VioletBox-V15-apk
+          path: apk-out/*.apk
+
+      - name: Failure diagnostics
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p ci-logs
+          cat build-debug.log build-release.log 2>/dev/null | tail -n 400 > ci-logs/build-log.txt || true
+          git config user.name "ci-bot"
+          git config user.email "ci-bot@users.noreply.github.com"
+          git checkout -B ci-logs
+          git add -f ci-logs || true
+          git commit -m "CI 失败诊断 $(date -u +%Y%m%dT%H%M%SZ)" || true
+          git push -f origin ci-logs || true
+
+      - name: Push APKs to apk branch
+        if: success()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          git config user.name "ci-bot"
+          git config user.email "ci-bot@users.noreply.github.com"
+          git checkout --orphan apk
+          git rm -rf . --quiet || true
+          mkdir -p apk
+          cp apk-out/*.apk apk/ || true
+          ls -lh apk
+          git add -f apk
+          git commit -m "VioletBox V15 APK $(date -u +%Y%m%dT%H%M%SZ)" || exit 1
+          git push -f origin apk

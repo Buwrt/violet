@@ -257,6 +257,21 @@ public class MainActivity extends AppCompatActivity {
                     Toast.makeText(this, "无法打开 GitHub 链接", Toast.LENGTH_SHORT).show();
                 }
             });
+
+        // 云析 YunX（AGPL-3.0，github.com/CYQawa/YunX）：网盘 / 视频链接解析与高速下载
+        View btnYunX = findViewById(R.id.btnYunX);
+        if (btnYunX != null) {
+            btnYunX.setOnClickListener(v -> {
+                try {
+                    Intent it = new Intent();
+                    it.setClassName(MainActivity.this, "com.yunx.app.MainActivity");
+                    startActivity(it);
+                } catch (Throwable t) {
+                    android.util.Log.w("VioletBox", "打开云析失败", t);
+                    Toast.makeText(this, "云析未随本版构建，请更新到 V15", Toast.LENGTH_SHORT).show();
+                }
+            });
+        }
         }
         View cardTelegramChannel = findViewById(R.id.cardTelegramChannel);
         if (cardTelegramChannel != null) {
