@@ -83,6 +83,10 @@ public class RomZoneActivity extends AppCompatActivity {
     private LocalRomCatalog.Version currentVer;
 
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
+    /** 搜索防抖用的实际动作，配合 removeCallbacks 去重。 */
+    private final Runnable searchAction = new Runnable() {
+        @Override public void run() { onBrandChanged(); }
+    };
     private final ExecutorService ioExecutor = Executors.newSingleThreadExecutor();
     private boolean busy;
 
@@ -133,12 +137,16 @@ public class RomZoneActivity extends AppCompatActivity {
         spVersionType.setOnItemSelectedListener(new SimpleSelected(this::onVersionTypeChanged));
         spRomType.setOnItemSelectedListener(new SimpleSelected(this::onRomTypeChanged));
         spSeries.setOnItemSelectedListener(new SimpleSelected(this::onSeriesChanged));
-        spDevice.setOnItemSelectedListener(new SimpleSelected(this::refreshVersions));
+        spDevice.setOnItemSelectedListener(new SimpleSelected(this::onDeviceChanged));
 
+        // 输入防抖：停止输入 300ms 后才筛选，避免逐字符重建六个下拉框
         etDeviceSearch.addTextChangedListener(new TextWatcher() {
             @Override public void beforeTextChanged(CharSequence s, int a, int b, int c) { }
             @Override public void onTextChanged(CharSequence s, int a, int b, int c) { }
-            @Override public void afterTextChanged(Editable e) { onBrandChanged(); }
+            @Override public void afterTextChanged(Editable e) {
+                mainHandler.removeCallbacks(searchAction);
+                mainHandler.postDelayed(searchAction, 300);
+            }
         });
 
         btnAll.setOnClickListener(v -> setAllChecked(true));
@@ -177,37 +185,81 @@ public class RomZoneActivity extends AppCompatActivity {
     }
 
     // ------------------------------------------------------------ 六级级联
+    //
+    // 两个坑，都已修掉：
+    // 1) 早期实现在 onSeriesChanged() 里重建了 spSeries 自己，新 adapter 一挂上
+    //    选中项就回到第 0 项「全部」，用户刚点的 Ace 系列当场被抹掉。
+    //    → 现在 setSpinner() 先比对内容，一模一样就完全不动；内容真变了才重建，
+    //      且重建后按原值找回位置（值还在就恢复，被过滤掉才退回「全部」）。
+    // 2) 换 adapter 会触发选中回调，回调又级联 → 每次点击都在主线程里循环重建
+    //    六个下拉框并重排整个页面，所以特别卡。
+    //    → 现在用 cascade 标志抑制，且改成单向级联：改哪一级只重算它下面的，
+    //      上面几级原样不动。
 
-    /** 第 1 级：品牌 → 重算机型池，再级联到区域。 */
+    /** 级联抑制：程序化重建下拉期间吞掉所有选中回调，避免消息风暴。 */
+    private boolean cascade;
+
+    private void runCascade(Runnable body) {
+        cascade = true;
+        try {
+            body.run();
+        } finally {
+            // 延后解除：Spinner 的选中回调可能是下一帧才投递的
+            mainHandler.post(() -> cascade = false);
+        }
+    }
+
+    /** 第 1 级：品牌变了 → 重算机型池，再向下重算区域及之后。 */
     private void onBrandChanged() {
+        if (cascade) return;
         String brand = current(spBrand);
         List<LocalRomCatalog.Device> base = (brand.isEmpty() || ALL.equals(brand))
                 ? LocalRomCatalog.allDevices(this)
                 : LocalRomCatalog.devices(this, brand);
         pool = filterBySearch(base);
-        onRegionChanged();
+        runCascade(() -> {
+            setSpinner(spRegion, optionsFor(d -> d.region, false, false, false));
+            cascadeFromVersionType();
+        });
     }
 
-    /** 第 2 级：区域 → 重算版本类型。 */
     private void onRegionChanged() {
-        setSpinner(spRegion, optionsFor(d -> d.region));
-        onVersionTypeChanged();
+        if (cascade) return;
+        runCascade(this::cascadeFromVersionType);
     }
 
-    /** 第 3 级：版本类型 → 重算 ROM 类型。 */
     private void onVersionTypeChanged() {
-        setSpinner(spVersionType, optionsFor(d -> d.versionType));
-        onRomTypeChanged();
+        if (cascade) return;
+        runCascade(this::cascadeFromRomType);
     }
 
-    /** 第 4 级：ROM 类型 → 重算系列。 */
     private void onRomTypeChanged() {
-        setSpinner(spRomType, optionsFor(d -> d.romType));
-        onSeriesChanged();
+        if (cascade) return;
+        runCascade(this::cascadeFromSeries);
     }
 
-    /** 第 5 级：系列 → 重算机型。 */
     private void onSeriesChanged() {
+        if (cascade) return;
+        runCascade(this::cascadeFromDevice);
+    }
+
+    private void onDeviceChanged() {
+        if (cascade) return;
+        runCascade(this::refreshVersions);
+    }
+
+    /** 版本类型 → ROM 类型 → 系列 → 机型 → 版本列表。 */
+    private void cascadeFromVersionType() {
+        setSpinner(spVersionType, optionsFor(d -> d.versionType, true, false, false));
+        cascadeFromRomType();
+    }
+
+    private void cascadeFromRomType() {
+        setSpinner(spRomType, optionsFor(d -> d.romType, true, true, false));
+        cascadeFromSeries();
+    }
+
+    private void cascadeFromSeries() {
         List<String> series = new ArrayList<>();
         for (LocalRomCatalog.Device d : pool) {
             if (matchesVersionFilter(d) && d.series != null && !d.series.isEmpty()
@@ -217,15 +269,20 @@ public class RomZoneActivity extends AppCompatActivity {
         }
         if (series.size() > 1) series.add(0, ALL);
         setSpinner(spSeries, series);
+        cascadeFromDevice();
+    }
 
+    private void cascadeFromDevice() {
+        String selSeries = current(spSeries);
+        List<String> names = new ArrayList<>();
         List<LocalRomCatalog.Device> devs = new ArrayList<>();
         for (LocalRomCatalog.Device d : pool) {
             if (!matchesVersionFilter(d)) continue;
-            String sel = current(spSeries);
-            if (!sel.isEmpty() && !ALL.equals(sel) && !sel.equals(d.series)) continue;
+            if (!selSeries.isEmpty() && !ALL.equals(selSeries) && !selSeries.equals(d.series)) {
+                continue;
+            }
             devs.add(d);
         }
-        List<String> names = new ArrayList<>();
         if (devs.size() > 1) names.add(ALL);
         for (LocalRomCatalog.Device d : devs) names.add(d.name + "（" + d.key + "）");
         setSpinner(spDevice, names);
@@ -241,13 +298,13 @@ public class RomZoneActivity extends AppCompatActivity {
             int b = devText.lastIndexOf('）');
             if (a >= 0 && b > a) deviceKey = devText.substring(a + 1, b);
         }
+        String selSeries = current(spSeries);
 
         versionResults.clear();
         versionDeviceNames.clear();
         for (LocalRomCatalog.Device d : pool) {
             if (!matchesVersionFilter(d)) continue;
             if (!deviceKey.isEmpty() && !deviceKey.equals(d.key)) continue;
-            String selSeries = current(spSeries);
             if (!selSeries.isEmpty() && !ALL.equals(selSeries) && !selSeries.equals(d.series)) {
                 continue;
             }
@@ -273,31 +330,39 @@ public class RomZoneActivity extends AppCompatActivity {
         updateCount();
     }
 
-    /** 该机型的版本里有没有一条同时满足 区域 + 版本类型 + ROM 类型。 */
+    /** 区域 + 版本类型 + ROM 类型 三项全过（系列和机型由列表自己收窄）。 */
     private boolean matchesVersionFilter(LocalRomCatalog.Device d) {
+        return matchesLevels(d, true, true, true);
+    }
+
+    /**
+     * 按「排在它前面」的几级过滤机型。
+     * 算第 N 级的可选值时只启用第 1..N-1 级，否则下拉里会出现选了就没结果的项。
+     */
+    private boolean matchesLevels(LocalRomCatalog.Device d,
+                                  boolean useRegion, boolean useVerType, boolean useRomType) {
         String region = current(spRegion);
         String verType = current(spVersionType);
         String romType = current(spRomType);
         for (LocalRomCatalog.Version v : d.versions) {
             if (!v.hasLink()) continue;
-            if (!region.isEmpty() && !ALL.equals(region) && !region.equals(v.region)) continue;
-            if (!verType.isEmpty() && !ALL.equals(verType) && !verType.equals(v.versionType)) {
-                continue;
-            }
-            if (!romType.isEmpty() && !ALL.equals(romType) && !romType.equals(v.romType)) continue;
+            if (useRegion && !region.isEmpty() && !ALL.equals(region)
+                    && !region.equals(v.region)) continue;
+            if (useVerType && !verType.isEmpty() && !ALL.equals(verType)
+                    && !verType.equals(v.versionType)) continue;
+            if (useRomType && !romType.isEmpty() && !ALL.equals(romType)
+                    && !romType.equals(v.romType)) continue;
             return true;
         }
         return false;
     }
 
-    /** 按已选的前几级条件，从版本里抽出某一字段的可选值。 */
-    private List<String> optionsFor(FieldPicker picker) {
+    /** 从满足条件的版本里抽出某一字段的可选值。 */
+    private List<String> optionsFor(FieldPicker picker,
+                                    boolean useRegion, boolean useVerType, boolean useRomType) {
         Set<String> set = new LinkedHashSet<>();
-        List<LocalRomCatalog.Device> scan = new ArrayList<>();
         for (LocalRomCatalog.Device d : pool) {
-            if (matchesPrefixFilter(d)) scan.add(d);
-        }
-        for (LocalRomCatalog.Device d : scan) {
+            if (!matchesLevels(d, useRegion, useVerType, useRomType)) continue;
             for (LocalRomCatalog.Version v : d.versions) {
                 if (v.hasLink()) set.add(picker.pick(v));
             }
@@ -305,21 +370,6 @@ public class RomZoneActivity extends AppCompatActivity {
         List<String> out = new ArrayList<>(set);
         if (out.size() > 1) out.add(0, ALL);
         return out;
-    }
-
-    /** 只按「排在它前面」的几级过滤，用于算下一级的可选值。 */
-    private boolean matchesPrefixFilter(LocalRomCatalog.Device d) {
-        String region = current(spRegion);
-        String verType = current(spVersionType);
-        for (LocalRomCatalog.Version v : d.versions) {
-            if (!v.hasLink()) continue;
-            if (!region.isEmpty() && !ALL.equals(region) && !region.equals(v.region)) continue;
-            if (!verType.isEmpty() && !ALL.equals(verType) && !verType.equals(v.versionType)) {
-                continue;
-            }
-            return true;
-        }
-        return false;
     }
 
     private List<LocalRomCatalog.Device> filterBySearch(List<LocalRomCatalog.Device> base) {
@@ -339,9 +389,6 @@ public class RomZoneActivity extends AppCompatActivity {
         return out;
     }
 
-    private interface FieldPicker {
-        String pick(LocalRomCatalog.Version v);
-    }
 
     // ------------------------------------------------------------ 版本选择与下载
 
@@ -644,10 +691,26 @@ public class RomZoneActivity extends AppCompatActivity {
     private void setSpinner(Spinner spinner, List<String> items) {
         List<String> data = items == null || items.isEmpty()
                 ? Collections.singletonList(PLACEHOLDER) : new ArrayList<>(items);
+        // 内容没变就完全不动 —— 重建 adapter 会把用户刚选中的值抹回「全部」
+        if (sameContent(spinner, data)) return;
+        String keep = current(spinner);
         ArrayAdapter<String> adapter = new ArrayAdapter<>(this,
                 android.R.layout.simple_spinner_item, data);
         adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
         spinner.setAdapter(adapter);
+        // 重建后恢复原选中值；该项已被过滤掉才退回「全部」
+        int idx = data.indexOf(keep);
+        spinner.setSelection(idx >= 0 ? idx : 0);
+    }
+
+    /** 逐项比对，避免无谓重建。 */
+    private static boolean sameContent(Spinner spinner, List<String> data) {
+        ArrayAdapter<?> ad = (ArrayAdapter<?>) spinner.getAdapter();
+        if (ad == null || ad.getCount() != data.size()) return false;
+        for (int i = 0; i < data.size(); i++) {
+            if (!data.get(i).equals(ad.getItem(i))) return false;
+        }
+        return true;
     }
 
     private String current(Spinner spinner) {
