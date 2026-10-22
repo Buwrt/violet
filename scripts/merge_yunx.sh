@@ -133,4 +133,13 @@ for dp, _, fs in os.walk(root):
 print(f"R 引用改写: {changed} 个文件换包名, {imported} 个文件补 import")
 PYEOF
 
+# ---------- 7. 覆盖融合版 YunXApp.kt ----------
+# 上游原版的 YunXApp 是 Application 子类，融合后必须由宿主 Application 承载，
+# 所以装配逻辑已抽成 YunXHost（见 scripts/yunx_patch/YunXApp.kt）。
+# 上一步整包拷贝会用上游原版覆盖它，这里再拷回来。
+if [ -f scripts/yunx_patch/YunXApp.kt ]; then
+  cp scripts/yunx_patch/YunXApp.kt app/src/main/kotlin/com/yunx/app/YunXApp.kt
+  echo "已覆盖融合版 YunXApp.kt（YunXHost 装配入口）"
+fi
+
 echo "===== 合并完成 ====="

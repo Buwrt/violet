@@ -84,6 +84,9 @@ dependencies {
     implementation("dev.rikka.shizuku:provider:13.1.5")
     implementation("androidx.swiperefreshlayout:swiperefreshlayout:1.1.0")
 
+    // PayloadActivity 的 SAF 落盘要用；material 升到 1.14.0 后不再传递带进来
+    implementation("androidx.documentfile:documentfile:1.0.1")
+
     // ===== 云析 YunX（AGPL-3.0）=====
     implementation(libs.androidx.room.runtime)
     implementation(libs.androidx.room.ktx)
