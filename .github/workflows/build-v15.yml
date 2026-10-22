@@ -15,6 +15,23 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # YunX 源码不进本仓库（291 个文件），CI 时从上游拉取后现场并入。
+      - name: Fetch YunX source
+        run: |
+          set -e
+          rm -rf /tmp/yunx
+          git clone --depth 1 https://github.com/CYQawa/YunX.git /tmp/yunx
+          echo "YunX HEAD: $(git -C /tmp/yunx rev-parse --short HEAD)"
+          echo "UPSTREAM_YUNX_SHA=$(git -C /tmp/yunx rev-parse HEAD)" >> $GITHUB_ENV
+
+      - name: Merge YunX into working tree
+        run: |
+          chmod +x ./scripts/merge_yunx.sh
+          ./scripts/merge_yunx.sh /tmp/yunx
+          echo "--- 校验 ---"
+          ls app/src/main/kotlin/com/yunx/app | head
+          test -f app/src/main/kotlin/com/yunx/app/MainActivity.kt
+
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
