@@ -64,6 +64,7 @@ public class RomZoneActivity extends AppCompatActivity {
     private Spinner spRegion;
     private Spinner spVersionType;
     private Spinner spRomType;
+    private Spinner spSystem;
     private Spinner spSeries;
     private Spinner spDevice;
     private Spinner spPartition;
@@ -106,6 +107,7 @@ public class RomZoneActivity extends AppCompatActivity {
         spRegion = findViewById(R.id.spRegion);
         spVersionType = findViewById(R.id.spVersionType);
         spRomType = findViewById(R.id.spRomType);
+        spSystem = findViewById(R.id.spSystem);
         spSeries = findViewById(R.id.spSeries);
         spDevice = findViewById(R.id.spDevice);
         spPartition = findViewById(R.id.spPartition);
@@ -137,6 +139,7 @@ public class RomZoneActivity extends AppCompatActivity {
         spRegion.setOnItemSelectedListener(new SimpleSelected(this::onRegionChanged));
         spVersionType.setOnItemSelectedListener(new SimpleSelected(this::onVersionTypeChanged));
         spRomType.setOnItemSelectedListener(new SimpleSelected(this::onRomTypeChanged));
+        spSystem.setOnItemSelectedListener(new SimpleSelected(this::onSystemChanged));
         spSeries.setOnItemSelectedListener(new SimpleSelected(this::onSeriesChanged));
         spDevice.setOnItemSelectedListener(new SimpleSelected(this::onDeviceChanged));
 
@@ -219,7 +222,7 @@ public class RomZoneActivity extends AppCompatActivity {
                 : LocalRomCatalog.devices(this, brand);
         pool = filterBySearch(base);
         runCascade(() -> {
-            setSpinner(spRegion, optionsFor(d -> d.region, false, false, false));
+            setSpinner(spRegion, optionsFor(d -> d.region, false, false, false, false));
             cascadeFromVersionType();
         });
     }
@@ -236,6 +239,11 @@ public class RomZoneActivity extends AppCompatActivity {
 
     private void onRomTypeChanged() {
         if (cascade) return;
+        runCascade(this::cascadeFromSystem);
+    }
+
+    private void onSystemChanged() {
+        if (cascade) return;
         runCascade(this::cascadeFromSeries);
     }
 
@@ -251,12 +259,18 @@ public class RomZoneActivity extends AppCompatActivity {
 
     /** 版本类型 → ROM 类型 → 系列 → 机型 → 版本列表。 */
     private void cascadeFromVersionType() {
-        setSpinner(spVersionType, optionsFor(d -> d.versionType, true, false, false));
+        setSpinner(spVersionType, optionsFor(d -> d.versionType, true, false, false, false));
         cascadeFromRomType();
     }
 
     private void cascadeFromRomType() {
-        setSpinner(spRomType, optionsFor(d -> d.romType, true, true, false));
+        setSpinner(spRomType, optionsFor(d -> d.romType, true, true, false, false));
+        cascadeFromSystem();
+    }
+
+    /** 第 5 级：系统版本。外链拿不到系统信息，值是「见页面」，任何筛选都匹配。 */
+    private void cascadeFromSystem() {
+        setSpinner(spSystem, optionsFor(d -> d.system, true, true, true, false));
         cascadeFromSeries();
     }
 
@@ -333,23 +347,25 @@ public class RomZoneActivity extends AppCompatActivity {
 
     /** 区域 + 版本类型 + ROM 类型 三项全过（系列和机型由列表自己收窄）。 */
     private boolean matchesVersionFilter(LocalRomCatalog.Device d) {
-        return matchesLevels(d, true, true, true);
+        return matchesLevels(d, true, true, true, true);
     }
 
     /**
      * 按「排在它前面」的几级过滤机型。
      * 算第 N 级的可选值时只启用第 1..N-1 级，否则下拉里会出现选了就没结果的项。
      */
-    private boolean matchesLevels(LocalRomCatalog.Device d,
-                                  boolean useRegion, boolean useVerType, boolean useRomType) {
+    private boolean matchesLevels(LocalRomCatalog.Device d, boolean useRegion,
+                                  boolean useVerType, boolean useRomType, boolean useSystem) {
         String region = current(spRegion);
         String verType = current(spVersionType);
         String romType = current(spRomType);
+        String system = current(spSystem);
         for (LocalRomCatalog.Version v : d.versions) {
             if (!v.hasLink()) continue;
             if (useRegion && !levelMatch(region, v.region)) continue;
             if (useVerType && !levelMatch(verType, v.versionType)) continue;
             if (useRomType && !levelMatch(romType, v.romType)) continue;
+            if (useSystem && !levelMatch(system, v.system)) continue;
             return true;
         }
         return false;
@@ -368,11 +384,11 @@ public class RomZoneActivity extends AppCompatActivity {
     }
 
     /** 从满足条件的版本里抽出某一字段的可选值。 */
-    private List<String> optionsFor(FieldPicker picker,
-                                    boolean useRegion, boolean useVerType, boolean useRomType) {
+    private List<String> optionsFor(FieldPicker picker, boolean useRegion,
+                                    boolean useVerType, boolean useRomType, boolean useSystem) {
         Set<String> set = new LinkedHashSet<>();
         for (LocalRomCatalog.Device d : pool) {
-            if (!matchesLevels(d, useRegion, useVerType, useRomType)) continue;
+            if (!matchesLevels(d, useRegion, useVerType, useRomType, useSystem)) continue;
             for (LocalRomCatalog.Version v : d.versions) {
                 if (v.hasLink()) set.add(picker.pick(v));
             }

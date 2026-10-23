@@ -27,6 +27,24 @@ public final class LocalRomCatalog {
     /** 外链条目在「区域 / 版本类型」上的通配值：任何筛选条件都匹配。 */
     public static final String WILDCARD = "见页面";
 
+    /** 清单里声明的全部系统版本取值，供 UI 建下拉框。 */
+    public static List<String> systems(Context ctx) {
+        List<String> out = new ArrayList<>();
+        try {
+            JSONObject o = load(ctx);
+            JSONArray arr = o.optJSONArray("systems");
+            if (arr != null) {
+                for (int i = 0; i < arr.length(); i++) {
+                    String v = arr.optString(i, "");
+                    if (!v.isEmpty() && !out.contains(v)) out.add(v);
+                }
+            }
+        } catch (Throwable ignored) {
+        }
+        if (out.isEmpty()) out.add(WILDCARD);
+        return out;
+    }
+
     /** 一条版本记录。 */
     public static final class Version {
         public final String version;
@@ -49,12 +67,14 @@ public final class LocalRomCatalog {
         public final boolean payload;
         /** true = 这是第三方站的机型下载页，要用浏览器打开，不是文件直链。 */
         public final boolean external;
+        /** 系统版本名：MIUI 14 / 澎湃OS 3 / ColorOS 16 / OxygenOS 15 / realme UI 5 … */
+        public final String system;
         /** 同固件的其它分块（一加归档的 firmware / logical 分卷 / hash）。 */
         public final Map<String, String> extra;
 
         Version(String version, String regionCode, String region, String versionType,
-                String romType, String android, String url, long size, String date,
-                String note, String source, boolean payload, boolean external,
+                String romType, String system, String android, String url, long size,
+                String date, String note, String source, boolean payload, boolean external,
                 Map<String, String> extra) {
             this.version = version;
             this.regionCode = regionCode;
@@ -69,6 +89,7 @@ public final class LocalRomCatalog {
             this.source = source;
             this.payload = payload;
             this.external = external;
+            this.system = system;
             this.extra = extra == null
                     ? Collections.<String, String>emptyMap()
                     : Collections.unmodifiableMap(new LinkedHashMap<>(extra));
@@ -95,6 +116,9 @@ public final class LocalRomCatalog {
             sb.append(version);
             if (romType != null && !romType.isEmpty()) sb.append(" · ").append(romType);
             if (versionType != null && !versionType.isEmpty()) sb.append(" · ").append(versionType);
+            if (system != null && !system.isEmpty() && !WILDCARD.equals(system)) {
+                sb.append(" · ").append(system);
+            }
             if (region != null && !region.isEmpty()) sb.append(" · ").append(region);
             if (!hasLink()) sb.append(" · 暂无直链");
             else if (external) sb.append(" · 浏览器打开下载页");
@@ -279,6 +303,7 @@ public final class LocalRomCatalog {
                 o.optString("region", ""),
                 o.optString("versionType", ""),
                 o.optString("romType", ""),
+                o.optString("system", WILDCARD),
                 o.optString("android", ""),
                 o.optString("url", ""),
                 o.optLong("size", 0L),
