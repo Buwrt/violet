@@ -40,6 +40,8 @@ public final class RomDownloadTask {
     /** 总字节数；服务端没给 Content-Length 时为 -1。 */
     public volatile long totalBytes = -1L;
     public volatile String errorMessage = "";
+    /** 轮换重试时试过的「域名/UA=状态码」记录，失败时展示，便于定位是哪一步被拒。 */
+    public volatile String fallbackTrace = "";
 
     /** 暂停标志：下载线程在块边界上检查它，置位后主动退出并保留 .part。 */
     volatile boolean pauseRequested = false;

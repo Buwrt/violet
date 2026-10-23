@@ -70,12 +70,101 @@ public final class RomDownloadManager {
     private final Handler main = new Handler(Looper.getMainLooper());
 
     /**
-     * OPPO 的 OTA CDN（gauss-componentotacostmanual-cn.allawnfs.com）会直接 403 掉
-     * {@code okhttp/x.y.z} 这个默认 UA，也会拒掉浏览器 / SmartTool 风格的 UA。
-     * 实测能通过的有：不带 UA、空 UA、Dalvik（Android 原生）、Python-urllib。
-     * 这里伪装成 Android 原生 UA——既通过校验，也比"完全没有 UA"更像正常客户端。
+     * UA 候选，按顺序试。
+     *
+     * <p>OPPO 的 OTA CDN（gauss-componentotacostmanual-cn.allawnfs.com）会 403 掉
+     * {@code okhttp/x.y.z} 默认 UA，也拒浏览器 / SmartTool 风格；能通过的是不带 UA、
+     * 空 UA、Dalvik（Android 原生）、Python-urllib。
+     *
+     * <p>但小米那边的偏好未必一样——所以不再赌某一个"万能 UA"，改成列表轮换：
+     * 哪个通就记下来，下次优先用它（见 {@link #preferredUa}）。
      */
-    private static final String SAFE_UA = "Dalvik/2.1.0 (Linux; U; Android 13; SM-G991B Build/TP1A.220624.014)";
+    private static final String[] UA_CANDIDATES = {
+            // Android 原生（小米设备），对小米 CDN 最自然
+            "Dalvik/2.1.0 (Linux; U; Android 14; M2102K1C Build/UKQ1.230804.001)",
+            // Android 原生（通用），OPPO gauss CDN 也要这个风格
+            "Dalvik/2.1.0 (Linux; U; Android 13; SM-G991B Build/TP1A.220624.014)",
+            // 浏览器
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                    + "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Mozilla/5.0 (Linux; Android 14; M2102K1C) AppleWebKit/537.36 "
+                    + "(KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36",
+            // OkHttp 默认
+            "okhttp/4.12.0",
+            // 空 UA（有些 CDN 反而不拦"没有 UA"的朴素请求）
+            "",
+    };
+
+    /** Referer 候选，同样按顺序试。 */
+    private static final String[] REFERER_CANDIDATES = {
+            "https://www.miui.com/",
+            "https://xiaomirom.com/",
+            "https://hyperos.mi.com/",
+            "",
+    };
+
+    /**
+     * 小米官方镜像：路径完全一致，只换 host —— 换 host 就等于换出口 IP。
+     * 这正是"一个 IP 访问不了就换下一个"在客户端能做的事（公网 IP 是运营商的，
+     * 客户端改不了，但请求打到哪台服务器可以选）。
+     */
+    private static final String[] MIUI_HOSTS = {
+            "bigota.d.miui.com",
+            "cdnorg.d.miui.com",
+            "bn.d.miui.com",
+            "hugeota.d.miui.com",
+    };
+
+    /** 上次成功的 UA / Referer，下次优先试，避免每次都从头撞一遍。 */
+    private static volatile String preferredUa = null;
+    private static volatile String preferredReferer = null;
+
+    /** 兼容旧引用。 */
+    private static final String SAFE_UA = UA_CANDIDATES[0];
+
+    /** 把候选按顺序排好，优先放上次成功的那个。 */
+    private static String[] ordered(String[] base, String preferred) {
+        if (preferred == null) return base;
+        for (String b : base) {
+            if (b.equals(preferred)) {
+                List<String> out = new ArrayList<>();
+                out.add(preferred);
+                for (String b2 : base) {
+                    if (!b2.equals(preferred)) out.add(b2);
+                }
+                return out.toArray(new String[0]);
+            }
+        }
+        return base;
+    }
+
+    /** 若 url 命中小米官方域，生成换 host 不改路径的镜像列表。 */
+    private static List<String> mirrorUrls(String url) {
+        List<String> out = new ArrayList<>();
+        if (url == null) return out;
+        String host = null;
+        try {
+            host = android.net.Uri.parse(url).getHost();
+        } catch (Throwable ignored) {
+        }
+        if (host == null) {
+            out.add(url);
+            return out;
+        }
+        String lower = host.toLowerCase(Locale.ROOT);
+        boolean miui = lower.endsWith("miui.com");
+        if (!miui) {
+            out.add(url);
+            return out;
+        }
+        // 先保留原 host，再依次换其它官方镜像
+        out.add(url);
+        for (String h : MIUI_HOSTS) {
+            if (h.equals(lower)) continue;
+            out.add(url.replace(lower, h));
+        }
+        return out;
+    }
 
     private final OkHttpClient http = new OkHttpClient.Builder()
             .connectTimeout(20, TimeUnit.SECONDS)
@@ -251,47 +340,28 @@ public final class RomDownloadManager {
         long startAt = task.partFile.exists() ? task.partFile.length() : 0L;
         if (startAt < 0) startAt = 0L;
 
-        Request.Builder builder = new Request.Builder().url(task.url);
-        // 先压上安全 UA，避免 OkHttp 默认的 okhttp/x.y.z 被 CDN 403
-        builder.header("User-Agent", SAFE_UA);
-        if (task.headers != null) {
-            for (Map.Entry<String, String> e : task.headers.entrySet()) {
-                String key = e.getKey();
-                String value = e.getValue();
-                if (key == null || value == null) continue;
-                // Host / Connection 交给 OkHttp 自己管，手动塞会冲突
-                if ("Host".equalsIgnoreCase(key) || "Connection".equalsIgnoreCase(key)) continue;
-                builder.header(key, value);
-            }
-        }
-        // 断点续传：从已下完的位置继续要
-        if (startAt > 0) {
-            builder.header("Range", "bytes=" + startAt + "-");
-        }
-
         File dir = task.finalFile.getParentFile();
         if (dir != null && !dir.exists() && !dir.mkdirs()) {
             fail(task, "无法创建目录：" + dir.getAbsolutePath());
             return;
         }
 
-        try {
-        Response response = http.newCall(builder.build()).execute();
-        if (!response.isSuccessful() && retryOnForbidden(task, response)) {
-            // 被 CDN 以 403 拒绝：换一组更"朴素"的 UA 重试一次
-            Request.Builder retry = new Request.Builder().url(task.url);
-            retry.header("User-Agent", "");
-            if (startAt > 0) {
-                retry.header("Range", "bytes=" + startAt + "-");
-            }
-            response = http.newCall(retry.build()).execute();
-        }
+        Response response = openWithFallback(task, startAt);
         try (Response resp = response) {
             // 206 = 续传成功；200 = 服务端不支持 Range，得从头写
             boolean resumed = resp.code() == 206;
             if (!resp.isSuccessful()) {
-                fail(task, "服务器返回 HTTP " + resp.code()
-                        + (resp.code() == 403 ? "（CDN 拒绝，直链可能已过期或被限流）" : ""));
+                String hint = "";
+                if (resp.code() == 403) {
+                    hint = "（CDN 拒绝：已自动轮换镜像域名/UA/Referer 重试）";
+                } else if (resp.code() == 404) {
+                    hint = "（文件不存在，链接可能已失效）";
+                } else if (resp.code() == 429) {
+                    hint = "（请求过于频繁，请稍后再试）";
+                }
+                String trace = task.fallbackTrace == null ? "" : task.fallbackTrace;
+                fail(task, "服务器返回 HTTP " + resp.code() + hint
+                        + (trace.isEmpty() ? "" : "\n已试组合：" + trace));
                 return;
             }
             ResponseBody body = resp.body();
@@ -383,20 +453,146 @@ public final class RomDownloadManager {
         } catch (Throwable t) {
             fail(task, t.getMessage() == null ? t.getClass().getSimpleName() : t.getMessage());
         }
+    }
+
+    /**
+     * 依次尝试「镜像域名 × UA × Referer」直到拿到 2xx/3xx。
+     *
+     * <p>403 不等于链接失效 —— 实测同一个链接在 runner 上所有组合都返回 200/206，
+     * 而用户侧 403，说明多半是出口 / 节点层面的拒绝，不是包没了。
+     * 所以这里不猜"已过期"，而是真去换路子重试：
+     * <ol>
+     *     <li>换小米官方镜像域名（路径不变，只换 host = 换出口 IP）；</li>
+     *     <li>换 UA（小米 / 通用 / 浏览器 / OkHttp / 空）；</li>
+     *     <li>换 Referer。</li>
+     * </ol>
+     * 全试过仍不行，才判定失败，并把试过的组合写进错误信息，便于定位。
+     */
+    private Response openWithFallback(RomDownloadTask task, long startAt) throws IOException {
+        List<String> urls = mirrorUrls(task.url);
+        String[] uas = ordered(UA_CANDIDATES, preferredUa);
+        String[] refs = ordered(REFERER_CANDIDATES, preferredReferer);
+
+        StringBuilder trace = new StringBuilder();
+        Response last = null;
+        int attempts = 0;
+
+        // 顺序很关键：**优先换域名**。IP 被拒时换 UA/Referer 是白费劲，
+        // 必须换到另一台服务器（另一组 IP）才有用。所以对每个域名只试少数几种
+        // UA/Referer，尽快把 4 个镜像都走一遍。
+        int perHost = Math.max(1, MAX_ATTEMPTS / Math.max(1, urls.size()));
+        for (String u : urls) {
+            int used = 0;
+            for (String ua : uas) {
+                for (String ref : refs) {
+                    if (attempts >= MAX_ATTEMPTS) break;
+                    if (used >= perHost) break;
+                    used++;
+                    attempts++;
+                    Request.Builder b = new Request.Builder().url(u);
+                    if (ua != null && !ua.isEmpty()) {
+                        b.header("User-Agent", ua);
+                    }
+                    if (ref != null && !ref.isEmpty()) {
+                        b.header("Referer", ref);
+                    }
+                    if (task.headers != null) {
+                        for (Map.Entry<String, String> e : task.headers.entrySet()) {
+                            String k = e.getKey();
+                            String v = e.getValue();
+                            if (k == null || v == null) continue;
+                            // Host / Connection 交给 OkHttp 管，手动塞会冲突
+                            if ("Host".equalsIgnoreCase(k) || "Connection".equalsIgnoreCase(k)) continue;
+                            b.header(k, v);
+                        }
+                    }
+                    if (startAt > 0) {
+                        b.header("Range", "bytes=" + startAt + "-");
+                    }
+                    // 注意：这里只发真正的下载请求，不掺探测。
+                    // 探测（Range: 0-0）在 probe() 里单独做，拿到的是 1 字节响应，
+                    // 绝不能当成正式数据流返回给调用方，否则会写出一个 1 字节的文件。
+                    // 先轻量探测：Range 0-0，只拿响应头，确认这条组合能通
+                    int probeCode = probe(u, ua, ref, task.headers);
+                    if (probeCode != 200 && probeCode != 206) {
+                        recordTrace(trace, u, ua, probeCode);
+                        continue;
+                    }
+                    // 探测通过，用同一套组合发真正的下载请求
+                    Response r = http.newCall(b.build()).execute();
+                    if (r.isSuccessful() || (r.code() >= 300 && r.code() < 400)) {
+                        // 记下这套组合，下次优先
+                        preferredUa = ua;
+                        preferredReferer = ref;
+                        if (last != null) {
+                            try {
+                                last.close();
+                            } catch (Throwable ignored) {
+                            }
+                        }
+                        return r;
+                    }
+                    recordTrace(trace, u, ua, r.code());
+                    if (last != null) {
+                        try {
+                            last.close();
+                        } catch (Throwable ignored) {
+                        }
+                    }
+                    last = r;
+                }
+            }
+        }
+        task.fallbackTrace = trace.toString().trim();
+        return last;
+    }
+
+    /** 最多试多少种组合就收手，避免把 CDN 当靶子打。 */
+    private static final int MAX_ATTEMPTS = 8;
+
+    /**
+     * 轻量探测：只发 Range: bytes=0-0，读响应头就关掉。
+     *
+     * <p>目的是在真正开始传几个 G 之前先确认这条「域名+UA+Referer」能不能通，
+     * 返回 200/206 才算数。探测响应最多 1 字节，不会拿来当正式数据。
+     */
+    private int probe(String url, String ua, String ref, Map<String, String> extra) {
+        Request.Builder b = new Request.Builder().url(url);
+        if (ua != null && !ua.isEmpty()) b.header("User-Agent", ua);
+        if (ref != null && !ref.isEmpty()) b.header("Referer", ref);
+        if (extra != null) {
+            for (Map.Entry<String, String> e : extra.entrySet()) {
+                String k = e.getKey();
+                String v = e.getValue();
+                if (k == null || v == null) continue;
+                if ("Host".equalsIgnoreCase(k) || "Connection".equalsIgnoreCase(k)) continue;
+                b.header(k, v);
+            }
+        }
+        b.header("Range", "bytes=0-0");
+        try (Response r = http.newCall(b.build()).execute()) {
+            if (r.body() != null) {
+                try {
+                    r.body().bytes();       // 读完并丢弃，确保连接可复用
+                } catch (Throwable ignored) {
+                }
+            }
+            return r.code();
         } catch (IOException e) {
-            // 发起请求 / 重试请求本身失败（如 DNS、连接超时）
-            fail(task, e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage());
+            return -1;                      // 网络层失败
         }
     }
 
-    /** 只在 403 时重试一次，其他错误直接失败，避免无效重放。 */
-    private boolean retryOnForbidden(RomDownloadTask task, Response response) {
-        if (response == null || response.code() != 403) return false;
+    private static void recordTrace(StringBuilder sb, String url, String ua, int code) {
+        String host = "";
         try {
-            response.close();
+            host = android.net.Uri.parse(url).getHost();
         } catch (Throwable ignored) {
         }
-        return true;
+        if (host == null) host = "";
+        sb.append(host).append('/')
+                .append(ua == null || ua.isEmpty() ? "(空UA)" : ua.substring(0, Math.min(16, ua.length())))
+                .append('=').append(code).append(' ');
     }
 
     private void fail(RomDownloadTask task, String reason) {
