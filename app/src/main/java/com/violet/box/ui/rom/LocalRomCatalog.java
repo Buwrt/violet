@@ -29,18 +29,7 @@ public final class LocalRomCatalog {
 
     /** 清单里声明的全部系统版本取值，供 UI 建下拉框。 */
     public static List<String> systems(Context ctx) {
-        List<String> out = new ArrayList<>();
-        try {
-            JSONObject o = load(ctx);
-            JSONArray arr = o.optJSONArray("systems");
-            if (arr != null) {
-                for (int i = 0; i < arr.length(); i++) {
-                    String v = arr.optString(i, "");
-                    if (!v.isEmpty() && !out.contains(v)) out.add(v);
-                }
-            }
-        } catch (Throwable ignored) {
-        }
+        List<String> out = new ArrayList<>(load(ctx).systems);
         if (out.isEmpty()) out.add(WILDCARD);
         return out;
     }
@@ -165,14 +154,18 @@ public final class LocalRomCatalog {
         final List<String> regions;
         final List<String> versionTypes;
         final List<String> romTypes;
+        /** 系统版本取值：MIUI 14 / 澎湃OS 3 / ColorOS 16 / OxygenOS 15 … */
+        final List<String> systems;
         final Map<String, List<Device>> byBrand;
 
         Catalog(List<String> brands, List<String> regions, List<String> versionTypes,
-                List<String> romTypes, Map<String, List<Device>> byBrand) {
+                List<String> romTypes, List<String> systems,
+                Map<String, List<Device>> byBrand) {
             this.brands = brands;
             this.regions = regions;
             this.versionTypes = versionTypes;
             this.romTypes = romTypes;
+            this.systems = systems;
             this.byBrand = byBrand;
         }
     }
@@ -242,6 +235,7 @@ public final class LocalRomCatalog {
         List<String> regions = new ArrayList<>();
         List<String> versionTypes = new ArrayList<>();
         List<String> romTypes = new ArrayList<>();
+        List<String> systems = new ArrayList<>();
         Map<String, List<Device>> byBrand = new LinkedHashMap<>();
         try {
             JSONObject root = new JSONObject(readAsset(ctx, "rom_catalog.json"));
@@ -249,6 +243,7 @@ public final class LocalRomCatalog {
             regions = strArray(root.optJSONArray("regions"));
             versionTypes = strArray(root.optJSONArray("versionTypes"));
             romTypes = strArray(root.optJSONArray("romTypes"));
+            systems = strArray(root.optJSONArray("systems"));
             JSONArray arr = root.optJSONArray("devices");
             if (arr != null) {
                 for (int i = 0; i < arr.length(); i++) {
@@ -267,7 +262,7 @@ public final class LocalRomCatalog {
         } catch (Throwable ignored) {
             // 清单损坏时返回空结构，界面会提示"没有数据"
         }
-        return new Catalog(brands, regions, versionTypes, romTypes, byBrand);
+        return new Catalog(brands, regions, versionTypes, romTypes, systems, byBrand);
     }
 
     private static Device deviceOf(String brand, JSONObject o) {
