@@ -347,6 +347,12 @@ public final class RomDownloadManager {
         }
 
         Response response = openWithFallback(task, startAt);
+        if (response == null) {
+            String trace = task.fallbackTrace == null ? "" : task.fallbackTrace;
+            fail(task, "所有镜像与 UA 组合均无法连接"
+                    + (trace.isEmpty() ? "" : "\n已试：" + trace));
+            return;
+        }
         try (Response resp = response) {
             // 206 = 续传成功；200 = 服务端不支持 Range，得从头写
             boolean resumed = resp.code() == 206;
@@ -468,7 +474,7 @@ public final class RomDownloadManager {
      * </ol>
      * 全试过仍不行，才判定失败，并把试过的组合写进错误信息，便于定位。
      */
-    private Response openWithFallback(RomDownloadTask task, long startAt) throws IOException {
+    private Response openWithFallback(RomDownloadTask task, long startAt) {
         List<String> urls = mirrorUrls(task.url);
         String[] uas = ordered(UA_CANDIDATES, preferredUa);
         String[] refs = ordered(REFERER_CANDIDATES, preferredReferer);
@@ -519,7 +525,13 @@ public final class RomDownloadManager {
                         continue;
                     }
                     // 探测通过，用同一套组合发真正的下载请求
-                    Response r = http.newCall(b.build()).execute();
+                    Response r;
+                    try {
+                        r = http.newCall(b.build()).execute();
+                    } catch (IOException e) {
+                        recordTrace(trace, u, ua, -1);
+                        continue;                       // 换下一套组合
+                    }
                     if (r.isSuccessful() || (r.code() >= 300 && r.code() < 400)) {
                         // 记下这套组合，下次优先
                         preferredUa = ua;
