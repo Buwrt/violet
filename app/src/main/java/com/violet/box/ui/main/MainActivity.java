@@ -259,18 +259,12 @@ public class MainActivity extends AppCompatActivity {
             });
 
         // 云析 YunX（AGPL-3.0，github.com/CYQawa/YunX）：网盘 / 视频链接解析与高速下载
+        // 懒加载：首次点击才在后台线程装配 YunX，主界面启动不依赖它。
         View btnYunX = findViewById(R.id.btnYunX);
         if (btnYunX != null) {
-            btnYunX.setOnClickListener(v -> {
-                try {
-                    Intent it = new Intent();
-                    it.setClassName(MainActivity.this, "com.yunx.app.MainActivity");
-                    startActivity(it);
-                } catch (Throwable t) {
-                    android.util.Log.w("VioletBox", "打开云析失败", t);
-                    Toast.makeText(this, "云析未随本版构建，请更新到 V15", Toast.LENGTH_SHORT).show();
-                }
-            });
+            btnYunX.setOnClickListener(v ->
+                    com.violet.box.ui.yunx.YunXBootstrap.open(this, () ->
+                            Toast.makeText(this, "正在初始化云析…", Toast.LENGTH_SHORT).show()));
         }
         }
         View cardTelegramChannel = findViewById(R.id.cardTelegramChannel);

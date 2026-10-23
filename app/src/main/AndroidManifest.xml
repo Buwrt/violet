@@ -483,10 +483,10 @@
             android:exported="false"
             android:foregroundServiceType="dataSync" />
 
-<provider
-            android:name="com.yunx.app.LaunchGate"
-            android:authorities="${applicationId}.launchgate"
-            android:exported="false" />
+<!-- 云析的 LaunchGate 已移除：它是 ContentProvider，会被系统在 Application 之前强制实例化，
+             onCreate 里跑反篡改自检，一旦误判就直接 CrashHandler.terminate() 杀进程，
+             表现是「点图标进不去」。融合场景里宿主 Application 类名必然不同，误判风险高；
+             而它只是防二次打包的闸门，不影响任何解析 / 下载功能，故不注册。 -->
 
 
     </application>
