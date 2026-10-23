@@ -181,7 +181,25 @@ public class RomZoneActivity extends AppCompatActivity {
                 startActivity(new Intent(this, RomDownloadsActivity.class)));
 
         ensureChannel();
-        onBrandChanged();
+        // 清单 2.2 MB（4381 条），主线程解析会明显卡顿 —— 先在 IO 线程预热，
+        // 解析完再回主线程渲染。解析期间显示进度条，界面不会假死。
+        preloadCatalog();
+    }
+
+    /** 后台解析清单，完成后主线程渲染首屏。 */
+    private void preloadCatalog() {
+        if (progressBar != null) progressBar.setVisibility(View.VISIBLE);
+        ioExecutor.execute(() -> {
+            try {
+                LocalRomCatalog.brands(RomZoneActivity.this);   // 触发一次解析并缓存
+            } catch (Throwable ignored) {
+            }
+            mainHandler.post(() -> {
+                if (progressBar != null) progressBar.setVisibility(View.GONE);
+                if (isFinishing() || isDestroyed()) return;
+                onBrandChanged();
+            });
+        });
     }
 
     @Override
