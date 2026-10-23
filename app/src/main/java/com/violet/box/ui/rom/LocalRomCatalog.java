@@ -89,6 +89,32 @@ public final class LocalRomCatalog {
         }
 
         /**
+         * 版本号主体：{@code 16.0.1.300(CN01)} → {@code 16.0.1.300}。
+         * 没有括号后缀时原样返回。
+         */
+        public String versionBase() {
+            if (version == null || version.isEmpty()) return "";
+            int i = version.lastIndexOf('(');
+            if (i > 0 && version.endsWith(")")) return version.substring(0, i).trim();
+            return version.trim();
+        }
+
+        /**
+         * 版本后缀：{@code 16.0.1.300(CN01)} → {@code CN01}；没有后缀返回空串。
+         *
+         * <p>后缀其实是区域代码（CN01 国行 / EX01 海外印度），与「区域」一级同源，
+         * 单独拆一级是为了让版本号本身更清爽，也便于按后缀精确筛选。
+         */
+        public String versionSuffix() {
+            if (version == null || version.isEmpty()) return "";
+            int i = version.lastIndexOf('(');
+            if (i >= 0 && version.endsWith(")")) {
+                return version.substring(i + 1, version.length() - 1).trim();
+            }
+            return "";
+        }
+
+        /**
          * 能不能不下整包直接拿到 boot / init_boot。
          *
          * <p>两条路：包里有 payload.bin（用 PayloadCore 按块 Range 拉取），

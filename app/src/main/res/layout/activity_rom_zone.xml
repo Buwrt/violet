@@ -243,6 +243,30 @@
                             android:layout_weight="1" />
                     </LinearLayout>
 
+                    <!-- 9 版本后缀（CN01 / EX01 …）。没有可选值时整行隐藏 -->
+                    <LinearLayout
+                        android:id="@+id/rowBuildTag"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="8dp"
+                        android:gravity="center_vertical"
+                        android:orientation="horizontal"
+                        android:visibility="gone">
+
+                        <TextView
+                            android:layout_width="72dp"
+                            android:layout_height="wrap_content"
+                            android:text="版本后缀"
+                            android:textColor="@color/ios_text_primary"
+                            android:textSize="13sp" />
+
+                        <Spinner
+                            android:id="@+id/spBuildTag"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1" />
+                    </LinearLayout>
+
                     <EditText
                         android:id="@+id/etDeviceSearch"
                         android:layout_width="match_parent"
