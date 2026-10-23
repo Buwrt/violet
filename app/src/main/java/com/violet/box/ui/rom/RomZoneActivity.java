@@ -67,7 +67,11 @@ public class RomZoneActivity extends AppCompatActivity {
     private Spinner spSystem;
     private Spinner spSeries;
     private Spinner spDevice;
+    private Spinner spVersionInfo;
     private Spinner spPartition;
+    /** 满足前七级的版本（不含「版本信息」过滤），供第 8 级抽取值与最终渲染复用。 */
+    private final List<LocalRomCatalog.Version> matchedVersions = new ArrayList<>();
+    private final List<String> matchedDeviceNames = new ArrayList<>();
     private ListView lvVersions;
     private TextView tvLog;
     private TextView tvCount;
@@ -110,6 +114,7 @@ public class RomZoneActivity extends AppCompatActivity {
         spSystem = findViewById(R.id.spSystem);
         spSeries = findViewById(R.id.spSeries);
         spDevice = findViewById(R.id.spDevice);
+        spVersionInfo = findViewById(R.id.spVersionInfo);
         spPartition = findViewById(R.id.spPartition);
         lvVersions = findViewById(R.id.lvVersions);
         tvLog = findViewById(R.id.tvLog);
@@ -142,6 +147,7 @@ public class RomZoneActivity extends AppCompatActivity {
         spSystem.setOnItemSelectedListener(new SimpleSelected(this::onSystemChanged));
         spSeries.setOnItemSelectedListener(new SimpleSelected(this::onSeriesChanged));
         spDevice.setOnItemSelectedListener(new SimpleSelected(this::onDeviceChanged));
+        spVersionInfo.setOnItemSelectedListener(new SimpleSelected(this::onVersionInfoChanged));
 
         // 输入防抖：停止输入 300ms 后才筛选，避免逐字符重建六个下拉框
         etDeviceSearch.addTextChangedListener(new TextWatcher() {
@@ -188,7 +194,7 @@ public class RomZoneActivity extends AppCompatActivity {
         return super.onOptionsItemSelected(item);
     }
 
-    // ------------------------------------------------------------ 六级级联
+    // ------------------------------------------------------------ 八级级联
     //
     // 两个坑，都已修掉：
     // 1) 早期实现在 onSeriesChanged() 里重建了 spSeries 自己，新 adapter 一挂上
@@ -257,7 +263,13 @@ public class RomZoneActivity extends AppCompatActivity {
         runCascade(this::refreshVersions);
     }
 
-    /** 版本类型 → ROM 类型 → 系列 → 机型 → 版本列表。 */
+    /** 第 8 级：只重新渲染，不重算前面的级。 */
+    private void onVersionInfoChanged() {
+        if (cascade) return;
+        runCascade(this::renderVersions);
+    }
+
+    /** 版本类型 → ROM 类型 → 系统版本 → 系列 → 机型 → 版本信息 → 版本列表。 */
     private void cascadeFromVersionType() {
         setSpinner(spVersionType, optionsFor(d -> d.versionType, true, false, false, false));
         cascadeFromRomType();
@@ -304,8 +316,15 @@ public class RomZoneActivity extends AppCompatActivity {
         refreshVersions();
     }
 
-    /** 第 6 级：机型 → 列出版本。 */
+    /** 第 7 级：机型 → 收集版本 → 收窄版本信息下拉 → 渲染。 */
     private void refreshVersions() {
+        collectMatchedVersions();
+        setSpinner(spVersionInfo, versionInfoOptions());
+        renderVersions();
+    }
+
+    /** 收集满足「区域 / 版本类型 / ROM 类型 / 系统版本 / 系列 / 机型」的全部版本。 */
+    private void collectMatchedVersions() {
         String devText = current(spDevice);
         String deviceKey = "";
         if (!devText.isEmpty() && !ALL.equals(devText) && !PLACEHOLDER.equals(devText)) {
@@ -315,8 +334,8 @@ public class RomZoneActivity extends AppCompatActivity {
         }
         String selSeries = current(spSeries);
 
-        versionResults.clear();
-        versionDeviceNames.clear();
+        matchedVersions.clear();
+        matchedDeviceNames.clear();
         for (LocalRomCatalog.Device d : pool) {
             if (!matchesVersionFilter(d)) continue;
             if (!deviceKey.isEmpty() && !deviceKey.equals(d.key)) continue;
@@ -325,9 +344,33 @@ public class RomZoneActivity extends AppCompatActivity {
             }
             for (LocalRomCatalog.Version v : d.versions) {
                 if (!v.hasLink()) continue;
-                versionResults.add(v);
-                versionDeviceNames.add(d.name + "_" + d.key);
+                matchedVersions.add(v);
+                matchedDeviceNames.add(d.name + "_" + d.key);
             }
+        }
+    }
+
+    /** 第 8 级：版本信息 —— 从已匹配版本里抽版本号去重。 */
+    private List<String> versionInfoOptions() {
+        Set<String> set = new LinkedHashSet<>();
+        for (LocalRomCatalog.Version v : matchedVersions) {
+            if (v.version != null && !v.version.isEmpty()) set.add(v.version);
+        }
+        List<String> out = new ArrayList<>(set);
+        if (out.size() > 1) out.add(0, ALL);
+        return out;
+    }
+
+    /** 按「版本信息」过滤后渲染列表（批量下载 / 提取按钮都读 versionResults）。 */
+    private void renderVersions() {
+        String selVer = current(spVersionInfo);
+        versionResults.clear();
+        versionDeviceNames.clear();
+        for (int i = 0; i < matchedVersions.size(); i++) {
+            LocalRomCatalog.Version v = matchedVersions.get(i);
+            if (!selVer.isEmpty() && !ALL.equals(selVer) && !selVer.equals(v.version)) continue;
+            versionResults.add(v);
+            versionDeviceNames.add(matchedDeviceNames.get(i));
         }
 
         List<String> labels = new ArrayList<>();

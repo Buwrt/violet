@@ -221,6 +221,28 @@
                             android:layout_weight="1" />
                     </LinearLayout>
 
+                    <!-- 8 版本信息（具体版本号，如 16.0.1.300(CN01)） -->
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="8dp"
+                        android:gravity="center_vertical"
+                        android:orientation="horizontal">
+
+                        <TextView
+                            android:layout_width="72dp"
+                            android:layout_height="wrap_content"
+                            android:text="版本信息"
+                            android:textColor="@color/ios_text_primary"
+                            android:textSize="13sp" />
+
+                        <Spinner
+                            android:id="@+id/spVersionInfo"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1" />
+                    </LinearLayout>
+
                     <EditText
                         android:id="@+id/etDeviceSearch"
                         android:layout_width="match_parent"
